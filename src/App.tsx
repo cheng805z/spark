@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Plus, Sparkles, Camera, Trash2, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { Search, Plus, Sparkles, Camera, Trash2, ChevronDown, ChevronUp, X, AlertCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from './lib/utils';
 
@@ -180,6 +180,7 @@ export default function App() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const inputRef = React.useRef<HTMLTextAreaElement>(null);
   const editInputRef = React.useRef<HTMLTextAreaElement>(null);
 
@@ -358,6 +359,7 @@ export default function App() {
 
   const handleDelete = (id: string) => {
     setThoughts(thoughts.filter(t => t.id !== id));
+    setConfirmingDeleteId(null);
   };
 
   const toggleExpand = (id: string) => {
@@ -601,16 +603,11 @@ export default function App() {
           <div key={colIndex} className="flex flex-col gap-6 w-full">
             <AnimatePresence mode="popLayout" initial={false}>
               {displayedThoughts
-                .filter((_, i) => {
-                  // Stable column assignment:
-                  // By using the index relative to the end of the filtered list,
-                  // adding a new item to the front doesn't shift the column of existing items.
-                  const reverseIndex = filteredThoughts.length - 1 - i;
-                  return (reverseIndex % activeCols) === colIndex;
-                })
+                .filter((_, i) => i % activeCols === colIndex)
                 .map((thought) => (
                   <motion.div
                     key={thought.id}
+                    layoutId={thought.id}
                     layout
                     initial={{ opacity: 0, scale: 0.9, y: 10 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -649,7 +646,7 @@ export default function App() {
                       
                       <div className="flex items-center bg-white/30 backdrop-blur-md rounded-full px-1 py-0.5 border border-white/40 shadow-sm">
                         <button
-                          onClick={(e) => { e.stopPropagation(); handleDelete(thought.id); }}
+                          onClick={(e) => { e.stopPropagation(); setConfirmingDeleteId(thought.id); }}
                           className="p-1 rounded-full text-gray-700 hover:bg-red-100 hover:text-red-600 transition-colors"
                           title="删除"
                         >
@@ -723,6 +720,49 @@ export default function App() {
           )}
         </motion.button>
       )}
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {confirmingDeleteId && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setConfirmingDeleteId(null)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-sm bg-white rounded-3xl p-8 shadow-2xl border border-gray-100 flex flex-col items-center text-center"
+            >
+              <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mb-6 text-red-500">
+                <AlertCircle size={32} />
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">确认删除？</h2>
+              <p className="text-gray-500 text-sm mb-8 leading-relaxed">
+                这条记录将被永久移除，此操作无法撤销。
+              </p>
+              <div className="flex w-full gap-3">
+                <button
+                  onClick={() => setConfirmingDeleteId(null)}
+                  className="flex-1 px-4 py-3 rounded-2xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => handleDelete(confirmingDeleteId)}
+                  className="flex-1 px-4 py-3 rounded-2xl bg-red-500 text-white font-semibold hover:bg-red-600 shadow-[0_4px_12px_rgba(239,68,68,0.3)] transition-all active:scale-95"
+                >
+                  确认删除
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       <style>{`
         .scrollbar-hide::-webkit-scrollbar {
