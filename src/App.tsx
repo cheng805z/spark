@@ -78,6 +78,73 @@ const BUBBLE_COLORS = [
   '255, 237, 213', // Orange
 ];
 
+// --- Helper Functions ---
+
+const compressImage = (base64Str: string): Promise<string> => {
+  return new Promise((resolve) => {
+    // If it's not a data URL (e.g. empty or placeholder path), skip processing
+    if (!base64Str || !base64Str.startsWith('data:image/')) {
+      resolve(base64Str);
+      return;
+    }
+    
+    const img = new Image();
+    img.src = base64Str;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(base64Str);
+        return;
+      }
+
+      let width = img.width;
+      let height = img.height;
+      let quality = 0.85;
+      let maxDimension = 1600;
+
+      const attemptCompression = () => {
+        let currentW = width;
+        let currentH = height;
+        
+        // Calculate dimensions to fit maxDimension
+        if (currentW > maxDimension || currentH > maxDimension) {
+          if (currentW > currentH) {
+            currentH = Math.round((currentH * maxDimension) / currentW);
+            currentW = maxDimension;
+          } else {
+            currentW = Math.round((currentW * maxDimension) / currentH);
+            currentH = maxDimension;
+          }
+        }
+
+        canvas.width = currentW;
+        canvas.height = currentH;
+        ctx.clearRect(0, 0, currentW, currentH);
+        ctx.drawImage(img, 0, 0, currentW, currentH);
+
+        // Compress as jpeg/webp for optimal byte reduction
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        
+        // Firestore row size limit is 1MB. Since Base64 has ~33% overhead, ~800,000 characters is a very safe ceiling.
+        if (dataUrl.length <= 800000 || maxDimension <= 360) {
+          resolve(dataUrl);
+        } else {
+          // Progressively decrease both dimensions and quality factors to guarantee we fall below the Firestore row limit.
+          maxDimension = Math.round(maxDimension * 0.75);
+          quality = Math.max(0.2, quality - 0.15);
+          attemptCompression();
+        }
+      };
+
+      attemptCompression();
+    };
+    img.onerror = () => {
+      resolve(base64Str); // Fallback to raw if loading fails
+    };
+  });
+};
+
 // --- Components ---
 
 const ThoughtContent = React.memo(({ content, isExpanded, onToggle }: { content: string, isExpanded: boolean, onToggle: () => void }) => {
@@ -436,22 +503,30 @@ export default function App() {
   };
 
   const updateBgImage = async (imageSrc: string) => {
-    // Validate image size (alert if larger than 800KB to stay below Firestore 1MB row limits)
-    if (imageSrc && imageSrc.length > 800000) {
-      showToast('图片太大，请选择 800KB 以下的背景图');
-      return;
+    let processedSrc = imageSrc;
+    
+    // Auto-compress base64 images that exceed the Firestore safety limit
+    if (imageSrc && imageSrc.startsWith('data:image/')) {
+      showToast('正在为您优化并设定背景图...');
+      try {
+        processedSrc = await compressImage(imageSrc);
+      } catch (err) {
+        console.error("Compression during updateBgImage failed:", err);
+      }
     }
-    setBgImage(imageSrc);
+
+    setBgImage(processedSrc);
     if (currentUser) {
       try {
         const docRef = doc(db, 'users', currentUser.uid);
         await setDoc(docRef, { 
-          bgImage: imageSrc, 
+          bgImage: processedSrc, 
           updatedAt: new Date().toISOString() 
         }, { merge: true });
         showToast('背景设计已保存在云端');
       } catch (err) {
         console.error("Failed to sync bgImage to Firestore:", err);
+        showToast('云端保存失败，请重试');
       }
     }
   };
@@ -580,10 +655,17 @@ export default function App() {
     input.onchange = (e: any) => {
       const file = e.target.files?.[0];
       if (file) {
+        showToast('正在读取图片...');
         const reader = new FileReader();
-        reader.onload = (event) => {
+        reader.onload = async (event) => {
           const result = event.target?.result as string;
-          updateBgImage(result);
+          try {
+            const compressed = await compressImage(result);
+            updateBgImage(compressed);
+          } catch (err) {
+            console.error("Compression error inside handleBgChange:", err);
+            updateBgImage(result);
+          }
         };
         reader.readAsDataURL(file);
       }
