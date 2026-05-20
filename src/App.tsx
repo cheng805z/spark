@@ -406,11 +406,22 @@ export default function App() {
 
     // A. Sync user settings
     const userDocRef = doc(db, 'users', currentUser.uid);
-    const unsubSettings = onSnapshot(userDocRef, (docSnap) => {
+    const unsubSettings = onSnapshot(userDocRef, async (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         if (data.bgImage !== undefined) setBgImage(data.bgImage);
         if (data.cardOpacity !== undefined) setCardOpacity(data.cardOpacity);
+      } else {
+        // Automatically initialize default settings in Firestore for new users so subsequent structural validations succeed
+        try {
+          await setDoc(userDocRef, {
+            cardOpacity: 0.4,
+            bgImage: '',
+            updatedAt: new Date().toISOString()
+          });
+        } catch (initErr) {
+          console.error("Failed to initialize user settings document on first sync:", initErr);
+        }
       }
     }, (err) => {
       console.error("Firestore settings sync failed:", err);
@@ -429,7 +440,8 @@ export default function App() {
       });
       setThoughts(dbThoughts);
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}/thoughts`);
+      console.error("Firestore thoughts subscription failed:", error);
+      showToast("同步名片记录失败，请检查数据库权限或网络");
     });
 
     // Check if guest thoughts can be imported to this user
@@ -1445,8 +1457,23 @@ export default function App() {
                       const savedBg = localStorage.getItem('bgImage');
                       const savedOpacity = localStorage.getItem('cardOpacity');
                       const userDocRef = doc(db, 'users', currentUser.uid);
+
+                      let finalBg = savedBg || '';
+                      if (finalBg && finalBg.startsWith('data:image/') && finalBg.length > 800000) {
+                        try {
+                          finalBg = await compressImage(finalBg);
+                        } catch (compressErr) {
+                          console.error("Compression failure on merge:", compressErr);
+                        }
+                      }
+
+                      if (finalBg && finalBg.length > 800000) {
+                        finalBg = ''; // Safe fall back to empty to prevent failure
+                        showToast('原背景图特别巨大，已重置背景，但所有名片已成功同步！');
+                      }
+
                       await setDoc(userDocRef, {
-                        bgImage: savedBg || '',
+                        bgImage: finalBg,
                         cardOpacity: parseFloat(savedOpacity || '0.4'),
                         updatedAt: new Date().toISOString()
                       }, { merge: true });
