@@ -731,39 +731,39 @@ export default function App() {
       )}
 
       {/* Top Branding & Controls */}
-      <div className="w-full max-w-7xl flex items-center mb-8 px-4 z-10 relative h-16">
+      <div className="w-full max-w-7xl flex items-center mb-8 px-3 md:px-4 z-10 relative h-16">
         {/* Left: Branding */}
-        <div className="w-1/4 flex justify-start">
-          <h1 className={cn("text-4xl md:text-5xl font-artistic flex items-center gap-3 drop-shadow-sm shrink-0", textColor)}>
+        <div className="w-auto sm:w-1/4 flex justify-start shrink-0">
+          <h1 className={cn("text-4xl md:text-5xl font-artistic flex items-center gap-2 md:gap-3 drop-shadow-sm shrink-0", textColor)}>
             <FlameIcon size={32} />
             <span className="hidden sm:inline">Sparkles</span>
           </h1>
         </div>
         
-        {/* Center: Search Bar - Re-engineered for maximum stability */}
-        <div className="w-2/4 flex justify-center px-4">
+        {/* Center: Search Bar - Re-engineered for maximum stability and mobile spacing */}
+        <div className="flex-1 max-w-xl flex justify-start sm:justify-center px-2 sm:px-4">
           <div className={cn(
-            "w-full max-w-xl flex items-center relative rounded-full transition-all duration-300 border shadow-sm",
+            "w-full flex items-center relative rounded-full transition-all duration-300 border shadow-sm",
             isDarkBg 
               ? "bg-[#1e1e1e]/90 border-white/10 focus-within:border-white/20 focus-within:bg-[#252525]" 
               : "bg-white/95 border-gray-200 focus-within:border-gray-300 focus-within:bg-white"
           )}>
-            <div className="pl-4 flex items-center pointer-events-none">
+            <div className="pl-3 md:pl-4 flex items-center pointer-events-none">
               <Search 
-                size={18} 
+                size={16} 
                 className={cn(
-                  "transition-colors duration-300",
+                  "transition-colors duration-300 md:w-[18px] md:h-[18px]",
                   isDarkBg ? "text-white/30" : "text-gray-400"
                 )} 
               />
             </div>
             <input 
               type="text"
-              placeholder="Search your sparks..."
+              placeholder="Search sparks..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className={cn(
-                "w-full bg-transparent border-none focus:ring-0 py-3 px-3 outline-none text-sm md:text-base",
+                "w-full bg-transparent border-none focus:ring-0 py-2.5 px-2 md:py-3 md:px-3 outline-none text-xs md:text-base",
                 isDarkBg ? "text-white placeholder:text-white/20" : "text-gray-900 placeholder:text-gray-400"
               )}
               style={{ 
@@ -775,7 +775,7 @@ export default function App() {
         </div>
 
         {/* Right: Controls */}
-        <div className="w-1/4 flex items-center justify-end gap-3 md:gap-4 shrink-0">
+        <div className="w-auto sm:w-1/4 flex items-center justify-end gap-1.5 sm:gap-3 md:gap-4 shrink-0 -mr-1 md:mr-0">
           {bgImage && (
           <div className="hidden md:flex flex-col items-end gap-0.5">
             <span className={cn("text-[8px] font-bold uppercase tracking-widest opacity-40", isDarkBg ? "text-white" : "text-gray-900")}>Opacity</span>
