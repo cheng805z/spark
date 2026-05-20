@@ -1,0 +1,59 @@
+{
+  "entities": {
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "User specific app state and customization",
+      "type": "object",
+      "properties": {
+        "bgImage": {
+          "type": "string",
+          "description": "Base64 string or url of custom background image"
+        },
+        "cardOpacity": {
+          "type": "number",
+          "description": "Transparency level for thought cards"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last time settings were updated"
+        }
+      },
+      "required": ["cardOpacity", "updatedAt"]
+    },
+    "Thought": {
+      "title": "Thought",
+      "description": "An individual thoughts record created by the user",
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string",
+          "description": "Text content of the thought"
+        },
+        "timestamp": {
+          "type": "integer",
+          "description": "Epoch timestamp of when the thought was created"
+        },
+        "color": {
+          "type": "string",
+          "description": "RGB string representation of card background color"
+        },
+        "userId": {
+          "type": "string",
+          "description": "UID of the owner user"
+        }
+      },
+      "required": ["content", "timestamp", "color", "userId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserSettings",
+      "description": "Stores individual user profile and customizable interface properties"
+    },
+    "/users/{userId}/thoughts/{thoughtId}": {
+      "schema": "Thought",
+      "description": "Collection of thought cards created by and visible to this user"
+    }
+  }
+}

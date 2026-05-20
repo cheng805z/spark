@@ -1,0 +1,81 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global safety net - Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Hardened Security Primitives ---
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Blueprints ---
+
+    function isValidUserSettings(data) {
+      return data.cardOpacity is number 
+        && data.cardOpacity >= 0.0 
+        && data.cardOpacity <= 1.0
+        && (data.bgImage == null || (data.bgImage is string && data.bgImage.size() <= 3145728)) // Allow up to 3MB Base64 backgrounds safely
+        && data.keys().hasAll(['cardOpacity', 'updatedAt'])
+        && data.keys().size() >= 2
+        && data.keys().size() <= 3;
+    }
+
+    function isValidThought(data) {
+      return data.content is string 
+        && data.content.size() <= 10000
+        && data.timestamp is int
+        && data.color is string
+        && data.color.size() <= 50
+        && data.userId is string
+        && data.userId == request.auth.uid
+        && data.keys().hasAll(['content', 'timestamp', 'color', 'userId'])
+        && data.keys().size() == 4;
+    }
+
+    // --- Rules Definitions ---
+
+    // /users/{userId} collection configurations
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create, update: if isOwner(userId) 
+        && isValidId(userId) 
+        && isValidUserSettings(incoming());
+      allow delete: if isOwner(userId);
+
+      // Subcollection for user-specific thought cards
+      match /thoughts/{thoughtId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidId(thoughtId)
+          && isValidThought(incoming());
+        allow update: if isOwner(userId)
+          && isValidId(thoughtId)
+          && isValidThought(incoming())
+          && incoming().timestamp == existing().timestamp; // Timestamp immutability
+        allow delete: if isOwner(userId)
+          && isValidId(thoughtId);
+      }
+    }
+  }
+}
