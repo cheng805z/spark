@@ -37,6 +37,8 @@ import {
   signOut, 
   GoogleAuthProvider, 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   User as FirebaseUser 
 } from 'firebase/auth';
 import { 
@@ -321,11 +323,26 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Listen to Auth State
+  // Listen to Auth State and handle Google Redirect Login
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
     });
+
+    // Check if coming back from Google redirect login (which is highly reliable on mobile platforms)
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          showToast('Google 一键同步登录成功！');
+        }
+      })
+      .catch((err: any) => {
+        console.error("Google redirect sign-in error:", err);
+        if (err.code && err.code !== 'auth/popup-blocked' && err.code !== 'auth/redirect-cancelled-by-user') {
+          showToast(`登录同步出错: ${err.message || '请尝试其他方式'}`);
+        }
+      });
+
     return () => unsub();
   }, []);
 
@@ -1306,24 +1323,37 @@ export default function App() {
                     <div className="flex-grow border-t border-black/10 dark:border-white/10"></div>
                   </div>
 
-                  {/* Standard Google Popup login Option */}
+                  {/* Standard Google Popup/Redirect login Option */}
                   <button
                     onClick={async () => {
+                      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
                       setAuthError('');
                       try {
                         setIsAuthLoading(true);
                         const provider = new GoogleAuthProvider();
-                        await signInWithPopup(auth, provider);
-                        showToast('Google 账号已成功接入！');
-                        setIsAuthModalOpen(false);
+                        
+                        if (isMobile) {
+                          // Mobile devices block popups aggressively, so redirect is 100% reliable
+                          showToast('正在引导至 Google 安全登录...');
+                          await signInWithRedirect(auth, provider);
+                        } else {
+                          // Standard Popup for desktop
+                          await signInWithPopup(auth, provider);
+                          showToast('Google 账号已成功接入！');
+                          setIsAuthModalOpen(false);
+                        }
                       } catch (err: any) {
                         console.error("Google Authentication error:", err);
-                        if (err.code === 'auth/popup-closed-by-user') {
+                        if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
+                          try {
+                            setAuthError('常规弹窗被阻止，已自动切换到安全重定向通道登录中...');
+                            const provider = new GoogleAuthProvider();
+                            await signInWithRedirect(auth, provider);
+                          } catch (redirectErr: any) {
+                            setAuthError('重定向登录也受限，推荐使用上方的邮箱一秒免验证注册登录，同样高安全实时同步！');
+                          }
+                        } else if (err.code === 'auth/popup-closed-by-user') {
                           setAuthError('温馨提示：您关闭了 Google 登录窗口。若在嵌入式预览中，建议先点击右上角在「新标签页」打开完整应用再重试，或者直接使用上方的邮箱及密码进行登录。');
-                        } else if (err.code === 'auth/popup-blocked') {
-                          setAuthError('登录失败：浏览器阻止了新窗口弹出。请在浏览器中允许本站弹出窗口，或直接使用上方的邮箱及密码登录。');
-                        } else if (err.code === 'auth/cancelled-popup-request') {
-                          setAuthError('登录失败：另一个登录弹窗已被启动而取消了本次请求，请刷新重试。');
                         } else {
                           setAuthError(err.message || 'Google 登录失败，请重试');
                         }
@@ -1349,7 +1379,7 @@ export default function App() {
                   </button>
 
                   <p className="mt-3 text-[10px] text-center opacity-50 leading-relaxed max-w-[280px] mx-auto">
-                    💡 提示：若手机浏览器或 iframe 嵌入框限制了 Google 弹窗，支持使用上方「邮箱注册」一秒创建账号，同样在两端实时同步
+                    💡 提示：若手机或 iframe 限制了 Google 弹窗，支持使用上方「邮箱注册」一秒创建账号，同样在两端实时同步
                   </p>
 
                   <div className="mt-5 text-center">
