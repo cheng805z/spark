@@ -154,40 +154,19 @@ const ThoughtContent = React.memo(({ content, isExpanded, onToggle }: { content:
   const checkTruncation = useCallback(() => {
     if (textRef.current) {
       const el = textRef.current;
-      
-      const originalStyle = el.style.display;
-      const originalClamp = el.style.webkitLineClamp;
-      const originalBoxOrient = el.style.webkitBoxOrient;
-      const originalOverflow = el.style.overflow;
-
-      el.style.display = '-webkit-box';
-      el.style.webkitLineClamp = '10';
-      el.style.webkitBoxOrient = 'vertical';
-      el.style.overflow = 'hidden';
-      const clampedHeight = el.offsetHeight;
-
-      el.style.display = 'block';
-      el.style.webkitLineClamp = '';
-      el.style.overflow = 'visible';
-      const fullHeight = el.scrollHeight;
-
-      el.style.display = originalStyle;
-      el.style.webkitLineClamp = originalClamp;
-      el.style.webkitBoxOrient = originalBoxOrient;
-      el.style.overflow = originalOverflow;
-
-      const nextCanTruncate = fullHeight > clampedHeight + 2;
-      setCanTruncate(prev => prev !== nextCanTruncate ? nextCanTruncate : prev);
+      if (!isExpanded) {
+        // When collapsed, check if the actual scrollHeight exceeds the visible height
+        const hasOverflow = el.scrollHeight > el.clientHeight + 2;
+        setCanTruncate(hasOverflow);
+      }
     }
-  }, []);
+  }, [isExpanded]);
 
   useEffect(() => {
     if (!textRef.current) return;
     
     const observer = new ResizeObserver(() => {
-      window.requestAnimationFrame(() => {
-        checkTruncation();
-      });
+      checkTruncation();
     });
     
     observer.observe(textRef.current);
@@ -294,6 +273,7 @@ export default function App() {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const inputRef = React.useRef<HTMLTextAreaElement>(null);
   const editInputRef = React.useRef<HTMLTextAreaElement>(null);
+  const isInitiallyLoaded = React.useRef(false);
 
   const [activeCols, setActiveCols] = useState(4);
   const [viewportLimit, setViewportLimit] = useState(12);
@@ -349,85 +329,56 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // 1. Load Local State (Guest Mode Only)
+  // 1. Load Local Styling & Configuration (Always client-side local, never cloud-synced)
   useEffect(() => {
-    if (currentUser) return;
     try {
-      const savedThoughts = localStorage.getItem('thoughts');
       const savedBg = localStorage.getItem('bgImage');
       const savedOpacity = localStorage.getItem('cardOpacity');
+      if (savedBg) setBgImage(savedBg);
+      if (savedOpacity) setCardOpacity(parseFloat(savedOpacity));
+    } catch (e) {
+      console.error("Failed to load local styling settings from localStorage:", e);
+    }
+  }, []);
+
+  // 2. Initial Local Cache Load (Hydrates UI instantly with cached thoughts upon refresh to prevent flash of empty state)
+  useEffect(() => {
+    try {
+      const savedThoughts = localStorage.getItem('thoughts');
       if (savedThoughts) {
         const parsed = JSON.parse(savedThoughts);
-        if (Array.isArray(parsed)) setThoughts(parsed);
-      } else {
-        setThoughts([]);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setThoughts(parsed);
+        }
       }
-      if (savedBg) setBgImage(savedBg);
-      else setBgImage('');
-      
-      if (savedOpacity) setCardOpacity(parseFloat(savedOpacity));
-      else setCardOpacity(0.4);
     } catch (e) {
-      console.error("Failed to load data from localStorage:", e);
+      console.error("Failed to load local thoughts cache:", e);
+    } finally {
+      isInitiallyLoaded.current = true;
     }
-  }, [currentUser]);
+  }, []);
 
-  // 2. Save Local State (Guest Mode Only)
+  // 3. Local State Persistence Cache (Automatically updates client cache, separates Guest backup)
   useEffect(() => {
-    if (currentUser) return;
+    if (!isInitiallyLoaded.current) return;
     try {
+      // Always cache active thoughts for instant loading on refresh
       localStorage.setItem('thoughts', JSON.stringify(thoughts));
+      
+      // If the user is currently a GUEST, also copy to 'guest_thoughts' as the merge backup
+      if (!currentUser) {
+        localStorage.setItem('guest_thoughts', JSON.stringify(thoughts));
+      }
     } catch (e) {
-      console.error("Failed to save thoughts:", e);
+      console.error("Failed to persistence thoughts to localStorage:", e);
     }
   }, [thoughts, currentUser]);
 
-  useEffect(() => {
-    if (currentUser) return;
-    try {
-      localStorage.setItem('bgImage', bgImage);
-    } catch (e) {
-      console.error("Failed to save background image:", e);
-    }
-  }, [bgImage, currentUser]);
-
-  useEffect(() => {
-    if (currentUser) return;
-    try {
-      localStorage.setItem('cardOpacity', cardOpacity.toString());
-    } catch (e) {
-      console.error("Failed to save card opacity:", e);
-    }
-  }, [cardOpacity, currentUser]);
-
-  // 3. Firestore Sync (Authenticated Mode)
+  // 4. Firestore Sync (Only card thoughts sync)
   useEffect(() => {
     if (!currentUser) return;
 
-    // A. Sync user settings
-    const userDocRef = doc(db, 'users', currentUser.uid);
-    const unsubSettings = onSnapshot(userDocRef, async (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (data.bgImage !== undefined) setBgImage(data.bgImage);
-        if (data.cardOpacity !== undefined) setCardOpacity(data.cardOpacity);
-      } else {
-        // Automatically initialize default settings in Firestore for new users so subsequent structural validations succeed
-        try {
-          await setDoc(userDocRef, {
-            cardOpacity: 0.4,
-            bgImage: '',
-            updatedAt: new Date().toISOString()
-          });
-        } catch (initErr) {
-          console.error("Failed to initialize user settings document on first sync:", initErr);
-        }
-      }
-    }, (err) => {
-      console.error("Firestore settings sync failed:", err);
-    });
-
-    // B. Sync thought records
+    // A. Sync thought records
     const thoughtsColRef = collection(db, 'users', currentUser.uid, 'thoughts');
     const q = query(thoughtsColRef, orderBy('timestamp', 'desc'));
     const unsubThoughts = onSnapshot(q, (snapshot) => {
@@ -444,11 +395,12 @@ export default function App() {
       showToast("同步名片记录失败，请检查数据库权限或网络");
     });
 
-    // Check if guest thoughts can be imported to this user
+    // B. Check if guest thoughts can be imported to this user
     try {
-      const localContents = localStorage.getItem('thoughts');
-      if (localContents) {
-        const parsed = JSON.parse(localContents);
+      const localGuestContents = localStorage.getItem('guest_thoughts');
+      const isIgnored = sessionStorage.getItem('ignoreBackupPrompt') === 'true';
+      if (localGuestContents && !isIgnored) {
+        const parsed = JSON.parse(localGuestContents);
         if (Array.isArray(parsed) && parsed.length > 0) {
           setLocalThoughtsBackup(parsed);
           setShowImportPrompt(true);
@@ -459,7 +411,6 @@ export default function App() {
     }
 
     return () => {
-      unsubSettings();
       unsubThoughts();
     };
   }, [currentUser]);
@@ -499,27 +450,20 @@ export default function App() {
     }
   }, [bgImage]);
 
-  const updateOpacity = async (opacity: number) => {
+  const updateOpacity = (opacity: number) => {
     setCardOpacity(opacity);
-    if (currentUser) {
-      try {
-        const docRef = doc(db, 'users', currentUser.uid);
-        await setDoc(docRef, { 
-          cardOpacity: opacity, 
-          updatedAt: new Date().toISOString() 
-        }, { merge: true });
-      } catch (err) {
-        console.error("Failed to sync cardOpacity to Firestore:", err);
-      }
+    try {
+      localStorage.setItem('cardOpacity', opacity.toString());
+    } catch (e) {
+      console.error("Failed to save cardOpacity to localStorage:", e);
     }
   };
 
   const updateBgImage = async (imageSrc: string) => {
     let processedSrc = imageSrc;
     
-    // Auto-compress base64 images that exceed the Firestore safety limit
     if (imageSrc && imageSrc.startsWith('data:image/')) {
-      showToast('正在为您优化并设定背景图...');
+      showToast('正在为您优化背景图...');
       try {
         processedSrc = await compressImage(imageSrc);
       } catch (err) {
@@ -528,18 +472,12 @@ export default function App() {
     }
 
     setBgImage(processedSrc);
-    if (currentUser) {
-      try {
-        const docRef = doc(db, 'users', currentUser.uid);
-        await setDoc(docRef, { 
-          bgImage: processedSrc, 
-          updatedAt: new Date().toISOString() 
-        }, { merge: true });
-        showToast('背景设计已保存在云端');
-      } catch (err) {
-        console.error("Failed to sync bgImage to Firestore:", err);
-        showToast('云端保存失败，请重试');
-      }
+    try {
+      localStorage.setItem('bgImage', processedSrc);
+      showToast(processedSrc ? '背景图设置成功！已保存在本地' : '背景图已移除');
+    } catch (e) {
+      console.error("Failed to save bgImage to localStorage:", e);
+      showToast('本地保存背景图失败');
     }
   };
 
@@ -1171,7 +1109,20 @@ export default function App() {
                       try {
                         setIsAuthLoading(true);
                         await signOut(auth);
-                        setThoughts([]); // React effect will reload LocalStorage automatically
+                        sessionStorage.removeItem('ignoreBackupPrompt');
+                        
+                        // Restore any existing guest offline thoughts
+                        const savedGuest = localStorage.getItem('guest_thoughts');
+                        if (savedGuest) {
+                          try {
+                            setThoughts(JSON.parse(savedGuest));
+                          } catch {
+                            setThoughts([]);
+                          }
+                        } else {
+                          setThoughts([]);
+                        }
+                        
                         setIsAuthModalOpen(false);
                         showToast('已断开同步，进入客体模式');
                       } catch (err: any) {
@@ -1367,7 +1318,15 @@ export default function App() {
                         setIsAuthModalOpen(false);
                       } catch (err: any) {
                         console.error("Google Authentication error:", err);
-                        setAuthError(err.message || 'Google 登录失败，请重试');
+                        if (err.code === 'auth/popup-closed-by-user') {
+                          setAuthError('温馨提示：您关闭了 Google 登录窗口。若在嵌入式预览中，建议先点击右上角在「新标签页」打开完整应用再重试，或者直接使用上方的邮箱及密码进行登录。');
+                        } else if (err.code === 'auth/popup-blocked') {
+                          setAuthError('登录失败：浏览器阻止了新窗口弹出。请在浏览器中允许本站弹出窗口，或直接使用上方的邮箱及密码登录。');
+                        } else if (err.code === 'auth/cancelled-popup-request') {
+                          setAuthError('登录失败：另一个登录弹窗已被启动而取消了本次请求，请刷新重试。');
+                        } else {
+                          setAuthError(err.message || 'Google 登录失败，请重试');
+                        }
                       } finally {
                         setIsAuthLoading(false);
                       }
@@ -1388,6 +1347,10 @@ export default function App() {
                     </svg>
                     使用 Google 账号一键同步
                   </button>
+
+                  <p className="mt-3 text-[10px] text-center opacity-50 leading-relaxed max-w-[280px] mx-auto">
+                    💡 提示：若手机浏览器或 iframe 嵌入框限制了 Google 弹窗，支持使用上方「邮箱注册」一秒创建账号，同样在两端实时同步
+                  </p>
 
                   <div className="mt-5 text-center">
                     <button
@@ -1433,58 +1396,77 @@ export default function App() {
 
               <h2 className="text-xl font-bold mb-2">发现本地名片记录！</h2>
               <p className="text-gray-500 dark:text-zinc-400 text-xs mb-6 px-1 leading-relaxed">
-                我们在你的设备中发现了 <strong>{localThoughtsBackup.length} 条</strong> 客体记录。要将它们以及自定义设置(背景图、不透明度)一键合并到你的新账号云端空间吗？
+                我们在你的设备中发现了 <strong>{localThoughtsBackup.length} 条</strong> 本地记录。要将它们一键同步合并到你的新账号云端空间吗？
               </p>
 
               <div className="w-full flex flex-col gap-2.5">
                 <button
                   disabled={isAuthLoading}
                   onClick={async () => {
+                    if (!currentUser) return;
                     setIsAuthLoading(true);
                     try {
                       const batch = writeBatch(db);
+                      
                       localThoughtsBackup.forEach((thought) => {
-                        const docRef = doc(db, 'users', currentUser.uid, 'thoughts', thought.id);
+                        // Ensure ID is safe, non-empty, and valid according to security rules regex
+                        const safeId = (thought.id && typeof thought.id === 'string' && thought.id.trim()) 
+                          ? thought.id 
+                          : (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 9));
+                        
+                        const docRef = doc(db, 'users', currentUser.uid, 'thoughts', safeId);
+                        
+                        // Sanitize content
+                        const content = typeof thought.content === 'string' ? thought.content : '';
+                        
+                        // Sanitize timestamp to a clear integer to strictly satisfy Firestore Rules "data.timestamp is int" type check
+                        let ts = Date.now();
+                        if (typeof thought.timestamp === 'number') {
+                          ts = Math.floor(thought.timestamp);
+                        } else if (thought.timestamp) {
+                          const parsed = Date.parse(String(thought.timestamp));
+                          if (!isNaN(parsed)) {
+                            ts = Math.floor(parsed);
+                          }
+                        }
+                        
+                        // Sanitize color
+                        const color = typeof thought.color === 'string' && thought.color.trim() ? thought.color : BUBBLE_COLORS[0];
+
                         batch.set(docRef, {
-                          content: thought.content,
-                          timestamp: thought.timestamp,
-                          color: thought.color,
+                          content,
+                          timestamp: ts,
+                          color,
                           userId: currentUser.uid
                         });
                       });
-                      await batch.commit();
 
-                      const savedBg = localStorage.getItem('bgImage');
-                      const savedOpacity = localStorage.getItem('cardOpacity');
-                      const userDocRef = doc(db, 'users', currentUser.uid);
+                      const commitPromise = batch.commit();
+                      
+                      // Race the commit against a 4-second timeout to prevent UI freeze on slow connections/offline mode
+                      const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('TIMEOUT')), 4000)
+                      );
 
-                      let finalBg = savedBg || '';
-                      if (finalBg && finalBg.startsWith('data:image/') && finalBg.length > 800000) {
-                        try {
-                          finalBg = await compressImage(finalBg);
-                        } catch (compressErr) {
-                          console.error("Compression failure on merge:", compressErr);
+                      try {
+                        await Promise.race([commitPromise, timeoutPromise]);
+                        showToast(`已成功将 ${localThoughtsBackup.length} 条名片同步到云空间！`);
+                      } catch (raceErr: any) {
+                        if (raceErr.message === 'TIMEOUT') {
+                          console.warn("Firestore batch commit is taking longer than expected. Continuing sync in background.");
+                          showToast(`正在后台同步 ${localThoughtsBackup.length} 条记录...`);
+                        } else {
+                          throw raceErr;
                         }
                       }
 
-                      if (finalBg && finalBg.length > 800000) {
-                        finalBg = ''; // Safe fall back to empty to prevent failure
-                        showToast('原背景图特别巨大，已重置背景，但所有名片已成功同步！');
-                      }
-
-                      await setDoc(userDocRef, {
-                        bgImage: finalBg,
-                        cardOpacity: parseFloat(savedOpacity || '0.4'),
-                        updatedAt: new Date().toISOString()
-                      }, { merge: true });
-
-                      showToast(`已成功将 ${localThoughtsBackup.length} 条名片同步！`);
-                      localStorage.removeItem('thoughts'); // Clear local cache to finalize sync!
+                      // Successfully queued or synchronized, so clean up local backup cache safely
+                      localStorage.removeItem('guest_thoughts'); 
                       setLocalThoughtsBackup([]);
                       setShowImportPrompt(false);
                     } catch (err: any) {
                       console.error("Critical Merge Error:", err);
-                      showToast('数据同步合并失败');
+                      showToast('数据同步合并失败，请确定连接状况良好并重试');
                     } finally {
                       setIsAuthLoading(false);
                     }
@@ -1501,17 +1483,17 @@ export default function App() {
                 <button
                   disabled={isAuthLoading}
                   onClick={() => {
-                    localStorage.removeItem('thoughts'); // ignore to skip and clear
+                    sessionStorage.setItem('ignoreBackupPrompt', 'true');
                     setLocalThoughtsBackup([]);
                     setShowImportPrompt(false);
-                    showToast('已切换至全新空云端');
+                    showToast('已进入云端空间，本地记录已妥善保留');
                   }}
                   className={cn(
                     "w-full py-3 rounded-2xl text-xs font-medium transition-all active:scale-[0.98] cursor-pointer",
                     isDarkBg ? "hover:bg-zinc-800 text-zinc-400" : "hover:bg-gray-100 text-gray-500"
                   )}
                 >
-                  暂时忽略 (开始全新云壁画)
+                  暂时忽略 (进入全新云壁画)
                 </button>
               </div>
             </motion.div>
