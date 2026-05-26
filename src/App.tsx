@@ -261,6 +261,34 @@ const FlameIcon = ({ size = 28 }: { size?: number }) => (
   </div>
 );
 
+const getAuthErrorMessage = (code: string, originalMessage: string, isRegistering: boolean): string => {
+  switch (code) {
+    case 'auth/operation-not-allowed':
+    case 'auth/configuration-not-found':
+      return '⚠️ 您的 Firebase 数据库尚未开启「邮箱密码认证」服务！\n请打开 Firebase 控制台 (console.firebase.google.com)，进入 Build -> Authentication -> Sign-in method，点击 Add new provider 开启「Email/Password」即可。';
+    case 'auth/email-already-in-use':
+      return '该邮箱已被注册，请直接使用登录功能，或点击底部切换为「立即登录」模式。';
+    case 'auth/invalid-email':
+      return '请输入格式合法的邮箱地址（形如 card@domain.com）。';
+    case 'auth/weak-password':
+      return '密码长度太短，密码长度至少需要 6 个字符。';
+    case 'auth/user-not-found':
+    case 'auth/wrong-password':
+    case 'auth/invalid-credential':
+      return isRegistering 
+        ? '密码或邮箱信息不正确。如果这是个新邮箱，请确保底部显示的是蓝色「创建账户并激活同步」而非「登录并加载同步数据」状态。'
+        : '密码不正确，或此邮箱尚未注册。如果您还没有此账号，请点击最下方的链接切换为「创建同步新账户」注册模式。';
+    case 'auth/network-request-failed':
+      return '网络请求失败。当前网络与 Firebase 连接受限，请检查连接状况或代理（VPN）是否开启，也极力推荐您通过 Google 一键登录直接同步。';
+    case 'auth/too-many-requests':
+      return '由于多次尝试密码错误，当前 IP 已被临时锁定。请稍后重试，或者直接使用 Google 账号进行同步。';
+    case 'auth/user-disabled':
+      return '此用户账号已被系统管理员禁用，请联系技术支持或尝试 Google 登录。';
+    default:
+      return originalMessage || (isRegistering ? '注册失败，请检查密码后重试' : '登录失败，请重试');
+  }
+};
+
 export default function App() {
   const [thoughts, setThoughts] = useState<Thought[]>([]);
   const [bgImage, setBgImage] = useState<string>('');
@@ -1213,13 +1241,7 @@ export default function App() {
                           setIsAuthModalOpen(false);
                         } catch (err: any) {
                           console.error("Register Error:", err);
-                          if (err.code === 'auth/email-already-in-use') {
-                            setAuthError('该邮箱已被注册，请直接点击登录');
-                          } else if (err.code === 'auth/invalid-email') {
-                            setAuthError('请输入格式合法的邮箱地址');
-                          } else {
-                            setAuthError(err.message || '注册失败，请检查密码后重试');
-                          }
+                          setAuthError(getAuthErrorMessage(err.code, err.message, true));
                         }
                       } else {
                         // Login Logic
@@ -1231,15 +1253,7 @@ export default function App() {
                           setIsAuthModalOpen(false);
                         } catch (err: any) {
                           console.error("Login Error:", err);
-                          if (
-                            err.code === 'auth/user-not-found' || 
-                            err.code === 'auth/wrong-password' || 
-                            err.code === 'auth/invalid-credential'
-                          ) {
-                            setAuthError('邮箱或密码不正确');
-                          } else {
-                            setAuthError(err.message || '登录失败，请再次重试');
-                          }
+                          setAuthError(getAuthErrorMessage(err.code, err.message, false));
                         }
                       }
                       setIsAuthLoading(false);
