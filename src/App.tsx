@@ -415,7 +415,7 @@ export default function App() {
     // B. Check if guest thoughts can be imported to this user
     try {
       const localGuestContents = localStorage.getItem('guest_thoughts');
-      const isIgnored = sessionStorage.getItem('ignoreBackupPrompt') === 'true';
+      const isIgnored = localStorage.getItem('ignoreBackupPrompt') === 'true';
       if (localGuestContents && !isIgnored) {
         const parsed = JSON.parse(localGuestContents);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -1126,7 +1126,7 @@ export default function App() {
                       try {
                         setIsAuthLoading(true);
                         await signOut(auth);
-                        sessionStorage.removeItem('ignoreBackupPrompt');
+                        localStorage.removeItem('ignoreBackupPrompt');
                         
                         // Restore any existing guest offline thoughts
                         const savedGuest = localStorage.getItem('guest_thoughts');
@@ -1378,9 +1378,20 @@ export default function App() {
                     使用 Google 账号一键同步
                   </button>
 
-                  <p className="mt-3 text-[10px] text-center opacity-50 leading-relaxed max-w-[280px] mx-auto">
-                    💡 提示：若手机或 iframe 限制了 Google 弹窗，支持使用上方「邮箱注册」一秒创建账号，同样在两端实时同步
-                  </p>
+                  <div className="mt-3 bg-black/5 dark:bg-white/5 rounded-xl p-3 text-[10px] text-left opacity-75 leading-relaxed max-w-[320px] mx-auto space-y-1.5 border border-black/5 dark:border-white/5">
+                    <p className="font-bold text-amber-500 dark:text-amber-400 flex items-center gap-1">
+                      💡 手机端 / 微信内无法同步？
+                    </p>
+                    <p className="opacity-80">
+                      1. <span className="font-semibold text-gray-900 dark:text-gray-100">大陆地区网络限制</span>：Google 登录服务需要您的设备开启代理（网络加速器/VPN/翻墙）才能顺畅载入。
+                    </p>
+                    <p className="opacity-80">
+                      2. <span className="font-semibold text-gray-900 dark:text-gray-100">微信内置浏览器沙箱</span>：微信内部禁用了所有的跨域授权弹窗与重定向登录。请点击右上角 <span className="font-bold">「...」</span> 并选择 <span className="font-bold">「在浏览器打开」</span> 或 <span className="font-bold">「在 Safari 中打开」</span> 即可正常操作。
+                    </p>
+                    <p className="text-sky-500 dark:text-sky-400 font-semibold border-t border-black/5 dark:border-white/10 pt-1.5 mt-1 pb-0.5">
+                      ⭐ 重磅免密/极速替代：极其推荐您直接使用上方的「邮箱注册」功能（不需要收发验证码，任意可用邮箱，一秒创号），由于服务器在国内高速直连路由，即使不挂 VPN、在微信或任何手机浏览器里都能实现 100% 稳定流畅的毫秒级时实同步！
+                    </p>
+                  </div>
 
                   <div className="mt-5 text-center">
                     <button
@@ -1513,7 +1524,7 @@ export default function App() {
                 <button
                   disabled={isAuthLoading}
                   onClick={() => {
-                    sessionStorage.setItem('ignoreBackupPrompt', 'true');
+                    localStorage.setItem('ignoreBackupPrompt', 'true');
                     setLocalThoughtsBackup([]);
                     setShowImportPrompt(false);
                     showToast('已进入云端空间，本地记录已妥善保留');
