@@ -440,19 +440,58 @@ export default function App() {
       showToast("同步名片记录失败，请检查数据库权限或网络");
     });
 
-    // B. Check if guest thoughts can be imported to this user
+    // B. Automatically and silently merge local guest cards into Cloud Firestore when logged in (no annoying prompt clicks!)
     try {
       const localGuestContents = localStorage.getItem('guest_thoughts');
-      const isIgnored = localStorage.getItem('ignoreBackupPrompt') === 'true';
-      if (localGuestContents && !isIgnored) {
+      if (localGuestContents) {
         const parsed = JSON.parse(localGuestContents);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          setLocalThoughtsBackup(parsed);
-          setShowImportPrompt(true);
+          const batch = writeBatch(db);
+          let mergedCount = 0;
+          parsed.forEach((thought) => {
+            if (!thought) return;
+            const safeId = (thought.id && typeof thought.id === 'string' && thought.id.trim()) 
+              ? thought.id 
+              : ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).substring(2, 9));
+            
+            const docRef = doc(db, 'users', currentUser.uid, 'thoughts', safeId);
+            const content = typeof thought.content === 'string' ? thought.content : '';
+            let ts = Date.now();
+            if (typeof thought.timestamp === 'number') {
+              ts = Math.floor(thought.timestamp);
+            } else if (thought.timestamp) {
+              const parsedTs = Date.parse(String(thought.timestamp));
+              if (!isNaN(parsedTs)) {
+                ts = Math.floor(parsedTs);
+              }
+            }
+            const color = typeof thought.color === 'string' && thought.color.trim() ? thought.color : BUBBLE_COLORS[0];
+
+            batch.set(docRef, {
+              content,
+              timestamp: ts,
+              color,
+              userId: currentUser.uid
+            });
+            mergedCount++;
+          });
+
+          if (mergedCount > 0) {
+            batch.commit()
+              .then(() => {
+                showToast(`已为您自动将 ${mergedCount} 条本地记录与云端合并！`);
+                localStorage.removeItem('guest_thoughts');
+              })
+              .catch((err) => {
+                console.error("Background auto sync merge failure:", err);
+              });
+          } else {
+            localStorage.removeItem('guest_thoughts');
+          }
         }
       }
     } catch (e) {
-      console.error("Error backing up guest thoughts:", e);
+      console.error("Auto merge local guest thoughts error:", e);
     }
 
     return () => {
@@ -1426,135 +1465,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Guest Backup Sync Prompt overlay */}
-      <AnimatePresence>
-        {showImportPrompt && currentUser && localThoughtsBackup.length > 0 && (
-          <div className="fixed inset-0 z-[105] flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className={cn(
-                "relative w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl border flex flex-col items-center text-center",
-                isDarkBg ? "bg-zinc-900 border-zinc-800 text-white" : "bg-white border-gray-100 text-gray-950"
-              )}
-            >
-              <div className="w-16 h-16 bg-blue-500/10 rounded-full flex items-center justify-center text-blue-500 mb-5 animate-pulse">
-                <RefreshCw size={28} />
-              </div>
 
-              <h2 className="text-xl font-bold mb-2">发现本地名片记录！</h2>
-              <p className="text-gray-500 dark:text-zinc-400 text-xs mb-6 px-1 leading-relaxed">
-                我们在你的设备中发现了 <strong>{localThoughtsBackup.length} 条</strong> 本地记录。要将它们一键同步合并到你的新账号云端空间吗？
-              </p>
-
-              <div className="w-full flex flex-col gap-2.5">
-                <button
-                  disabled={isAuthLoading}
-                  onClick={async () => {
-                    if (!currentUser) return;
-                    setIsAuthLoading(true);
-                    try {
-                      const batch = writeBatch(db);
-                      
-                      localThoughtsBackup.forEach((thought) => {
-                        // Ensure ID is safe, non-empty, and valid according to security rules regex
-                        const safeId = (thought.id && typeof thought.id === 'string' && thought.id.trim()) 
-                          ? thought.id 
-                          : (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 9));
-                        
-                        const docRef = doc(db, 'users', currentUser.uid, 'thoughts', safeId);
-                        
-                        // Sanitize content
-                        const content = typeof thought.content === 'string' ? thought.content : '';
-                        
-                        // Sanitize timestamp to a clear integer to strictly satisfy Firestore Rules "data.timestamp is int" type check
-                        let ts = Date.now();
-                        if (typeof thought.timestamp === 'number') {
-                          ts = Math.floor(thought.timestamp);
-                        } else if (thought.timestamp) {
-                          const parsed = Date.parse(String(thought.timestamp));
-                          if (!isNaN(parsed)) {
-                            ts = Math.floor(parsed);
-                          }
-                        }
-                        
-                        // Sanitize color
-                        const color = typeof thought.color === 'string' && thought.color.trim() ? thought.color : BUBBLE_COLORS[0];
-
-                        batch.set(docRef, {
-                          content,
-                          timestamp: ts,
-                          color,
-                          userId: currentUser.uid
-                        });
-                      });
-
-                      const commitPromise = batch.commit();
-                      
-                      // Race the commit against a 4-second timeout to prevent UI freeze on slow connections/offline mode
-                      const timeoutPromise = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('TIMEOUT')), 4000)
-                      );
-
-                      try {
-                        await Promise.race([commitPromise, timeoutPromise]);
-                        showToast(`已成功将 ${localThoughtsBackup.length} 条名片同步到云空间！`);
-                      } catch (raceErr: any) {
-                        if (raceErr.message === 'TIMEOUT') {
-                          console.warn("Firestore batch commit is taking longer than expected. Continuing sync in background.");
-                          showToast(`正在后台同步 ${localThoughtsBackup.length} 条记录...`);
-                        } else {
-                          throw raceErr;
-                        }
-                      }
-
-                      // Successfully queued or synchronized, so clean up local backup cache safely
-                      localStorage.removeItem('guest_thoughts'); 
-                      setLocalThoughtsBackup([]);
-                      setShowImportPrompt(false);
-                    } catch (err: any) {
-                      console.error("Critical Merge Error:", err);
-                      showToast('数据同步合并失败，请确定连接状况良好并重试');
-                    } finally {
-                      setIsAuthLoading(false);
-                    }
-                  }}
-                  className="w-full py-3.5 bg-blue-500 text-white font-semibold rounded-2xl hover:bg-blue-600 transition-colors shadow-lg shadow-blue-500/20 active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  {isAuthLoading ? (
-                    <Loader2 size={16} className="animate-spin" />
-                  ) : (
-                    '一键同步合并到云端'
-                  )}
-                </button>
-
-                <button
-                  disabled={isAuthLoading}
-                  onClick={() => {
-                    localStorage.setItem('ignoreBackupPrompt', 'true');
-                    setLocalThoughtsBackup([]);
-                    setShowImportPrompt(false);
-                    showToast('已进入云端空间，本地记录已妥善保留');
-                  }}
-                  className={cn(
-                    "w-full py-3 rounded-2xl text-xs font-medium transition-all active:scale-[0.98] cursor-pointer",
-                    isDarkBg ? "hover:bg-zinc-800 text-zinc-400" : "hover:bg-gray-100 text-gray-500"
-                  )}
-                >
-                  暂时忽略 (进入全新云壁画)
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       <style>{`
         .scrollbar-hide::-webkit-scrollbar {
